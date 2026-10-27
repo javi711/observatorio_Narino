@@ -132,8 +132,8 @@ CREDITOS = {
     "programa": "Programa de Economía",
     "facultad": "[Facultad de Ciencias Económicas y Administrativas]",
     "universidad": "[Universidad de Nariño]",
-    "docente": "[Julio Riascos]",
-    "seminario": "[Investigación Regional / curso]",
+    "docente": "[Docente: Julio Riascos]",
+    "seminario": "[Investigación Regional]",
     "ciudad_anio": "San Juan de Pasto, 2026",
 }
 

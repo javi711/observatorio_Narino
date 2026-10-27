@@ -127,13 +127,13 @@ if _en_streamlit():
 # 0. CONFIGURACIÓN EDITABLE (créditos, periodo, conexión)
 # -----------------------------------------------------------------------------
 CREDITOS = {
-    "autores": ["Francisco [Apellidos]", "[Nombre del coinvestigador]"],
-    "rol": "Estudiantes investigadores",
+    "autores": ["[Francisco Lagos]", "[Nataly Viteri]"], "[Fernando Dominguez]"], "[Laura Castañeda]"],
+    "rol": "Estudiantes de Seminario de Investigación",
     "programa": "Programa de Economía",
     "facultad": "[Facultad de Ciencias Económicas y Administrativas]",
-    "universidad": "[Nombre de la universidad]",
-    "docente": "[Nombre del docente tutor]",
-    "seminario": "[Nombre del seminario / curso]",
+    "universidad": "[Universidad de Nariño]",
+    "docente": "[Julio Riascos]",
+    "seminario": "[Investigación Regional / curso]",
     "ciudad_anio": "San Juan de Pasto, 2026",
 }
 

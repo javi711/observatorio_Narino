@@ -127,7 +127,7 @@ if _en_streamlit():
 # 0. CONFIGURACIÓN EDITABLE (créditos, periodo, conexión)
 # -----------------------------------------------------------------------------
 CREDITOS = {
-    "autores": ["[Francisco Lagos]", "[Nataly Viteri]", "[Fernando Dominguez]", "[Laura Castañeda]"],
+    "autores": ["Francisco Lagos", "Nataly Viteri", "Fernando Dominguez", "Laura Castañeda"],
     "rol": "Estudiantes de Seminario de Investigación",
     "programa": "Programa de Economía",
     "facultad": "[Facultad de Ciencias Económicas y Administrativas]",

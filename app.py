@@ -16,6 +16,99 @@ if _FALTAN:
     print("▸ Instalando dependencias:", ", ".join(_FALTAN))
     _sp.check_call([_sys.executable, "-m", "pip", "install", "-q", *_FALTAN])
 
+# -----------------------------------------------------------------------------
+# MODO STREAMLIT (streamlit run app.py · Streamlit Community Cloud)
+# Streamlit vuelve a ejecutar el script completo en cada visita e interacción, mientras
+# que Gradio necesita UN servidor persistente; ejecutar ambos en el mismo proceso produce
+# «Cannot call click outside of a gradio.Blocks context». Bajo Streamlit, el observatorio
+# se lanza una sola vez como subproceso (python app.py) y se incrusta en la página; el
+# resto de este script no se ejecuta dentro de Streamlit. En Colab o con «python app.py»
+# este bloque se omite y la aplicación arranca normalmente.
+# -----------------------------------------------------------------------------
+import os as _os
+
+
+def _en_streamlit():
+    if _os.environ.get("OBS_SUBPROCESO") == "1" or "streamlit" not in _sys.modules:
+        return False
+    try:
+        from streamlit.runtime import exists as _st_existe
+        return bool(_st_existe())
+    except Exception:
+        return False
+
+
+if _en_streamlit():
+    import atexit as _atexit
+    import re as _re
+    import threading as _th
+    import time as _time
+    import streamlit as st
+    import streamlit.components.v1 as _componentes
+
+    st.set_page_config(page_title="Observatorio Económico y Social de Nariño", page_icon="🏛️", layout="wide")
+
+    @st.cache_resource(show_spinner=False)
+    def _servidor_gradio():
+        """Lanza el observatorio Gradio una sola vez por proceso de Streamlit y captura sus URL."""
+        entorno = dict(_os.environ, OBS_SUBPROCESO="1", PYTHONUNBUFFERED="1")
+        proc = _sp.Popen([_sys.executable, "-u", _os.path.abspath(__file__)], env=entorno, stdout=_sp.PIPE,
+                         stderr=_sp.STDOUT, text=True, bufsize=1)
+        estado = {"proc": proc, "local": None, "publica": None, "sin_enlace": False, "log": []}
+
+        def _leer():
+            for linea in proc.stdout:
+                linea = linea.rstrip()
+                estado["log"] = (estado["log"] + [linea])[-200:]
+                m = _re.search(r"Running on local URL:\s*(\S+)", linea)
+                if m:
+                    estado["local"] = m.group(1)
+                m = _re.search(r"Running on public URL:\s*(\S+)", linea)
+                if m:
+                    estado["publica"] = m.group(1)
+                if "Could not create share link" in linea:
+                    estado["sin_enlace"] = True
+
+        _th.Thread(target=_leer, daemon=True).start()
+        _atexit.register(lambda: proc.poll() is None and proc.terminate())
+        return estado
+
+    st.markdown("<style>.block-container{padding:3rem 0.8rem 0 0.8rem;max-width:100%;}"
+                "iframe{border:none;border-radius:12px;}</style>", unsafe_allow_html=True)
+    _est = _servidor_gradio()
+    with st.spinner("Iniciando el Observatorio: descargando cartografía MGN-DANE y datos oficiales (puede tardar 1–2 minutos la primera vez)…"):
+        _t0 = _time.time()
+        while (_est["publica"] is None and not _est["sin_enlace"] and _est["proc"].poll() is None
+               and _time.time() - _t0 < 420):
+            _time.sleep(1)
+    if _est["sin_enlace"] and _est["local"] and _est["proc"].poll() is None:
+        _time.sleep(2)
+    _url = _est["publica"] or (_est["local"] if _est["sin_enlace"] and _est["proc"].poll() is None else None)
+    if _url:
+        _c1, _c2 = st.columns([4, 1])
+        _c1.markdown("##### 🏛️ Observatorio Económico y Social de Nariño")
+        _c2.link_button("Abrir en pantalla completa ↗", _url)
+        if not _est["publica"]:
+            st.info("No se pudo crear el enlace público de Gradio; se muestra la dirección local, visible solo desde este mismo equipo.")
+        if hasattr(st, "iframe"):
+            st.iframe(_url, height=1900)
+        else:
+            _componentes.iframe(_url, height=1900, scrolling=True)
+    else:
+        if _est["proc"].poll() is not None:
+            st.error("El servidor del observatorio se detuvo. Últimas líneas del registro:")
+        elif _est["sin_enlace"]:
+            st.error("Gradio no pudo crear el enlace público que permite mostrar la interfaz dentro de Streamlit. Últimas líneas del registro:")
+        else:
+            st.warning("El observatorio sigue cargando. Recargue la página en un momento. Registro:")
+        st.code("\n".join(_est["log"][-40:]) or "(sin registro)")
+        if st.button("Reiniciar el servidor del observatorio"):
+            if _est["proc"].poll() is None:
+                _est["proc"].terminate()
+            st.cache_resource.clear()
+            st.rerun()
+    st.stop()
+
 # =============================================================================
 #  OBSERVATORIO ECONÓMICO Y SOCIAL DE NARIÑO
 #  Plataforma Territorial de Inteligencia Económica y Simulación de Políticas
@@ -331,6 +424,24 @@ CSS += """
 .badge.imp{background:#fef3c7;color:#b45309;}
 .src.live{color:#047857;} .src.snap{color:#1e40af;}
 .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(178px,1fr)) !important;}
+.sel-box{margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:10px 14px;}
+.sel-box h5{margin:0 0 6px !important;font-size:13.5px !important;font-weight:800 !important;color:#1e3a8a !important;}
+.sel-box ul{margin:0 !important;padding-left:18px !important;}
+.sel-box li{color:#0f172a !important;font-size:13.5px;margin:3px 0;}
+.estado-filtros{margin-top:8px;border-radius:10px;padding:7px 10px;font-size:12px;font-weight:700;line-height:1.35;text-align:center;}
+.estado-filtros span{font-weight:500;font-size:11.5px;}
+.estado-filtros.ok{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;}
+.estado-filtros.pend{background:#fffbeb;color:#b45309;border:1px solid #fde68a;}
+.perfil{background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:18px 20px;margin:14px 0;box-shadow:0 2px 10px rgba(15,23,42,.05);}
+.perfil .eyebrow{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;font-weight:800;}
+.perfil h3{margin:4px 0 4px !important;font-size:22px !important;font-weight:800 !important;color:#0f172a !important;}
+.perfil-cab p{margin:0 0 10px !important;color:#475569 !important;font-size:13.5px;}
+.perfil .u{font-size:11px;color:#64748b;}
+.perfil .tbl-wrap{max-height:none !important;}
+.perfil-vacio{background:#eff6ff;border:1px dashed #93c5fd;border-radius:14px;padding:14px 18px;margin:14px 0;color:#1e3a8a;font-size:14px;line-height:1.55;}
+.sem{font-size:12px;font-weight:700;white-space:nowrap;}
+.sem.ok{color:#047857;} .sem.mal{color:#b91c1c;} .sem.neutro{color:#94a3b8;}
+.nota-alcance{background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #f59e0b;border-radius:10px;padding:9px 14px;margin:8px 0 4px;color:#334155;font-size:13px;}
 /* Barra de navegación de pestañas: siempre visible, con nombres legibles en modo claro y oscuro */
 .tab-wrapper{background:#ffffff !important;border:1px solid #cbd5e1 !important;border-radius:14px !important;padding:8px 10px !important;margin:6px 0 14px !important;box-shadow:0 2px 8px rgba(15,23,42,.08) !important;height:auto !important;}
 .tab-container{height:auto !important;min-height:44px !important;gap:6px !important;flex-wrap:wrap !important;align-items:center !important;}
@@ -2403,6 +2514,125 @@ def nota_anio(k, pedido, usado):
 
 
 # -----------------------------------------------------------------------------
+# 13b. SELECCIÓN TERRITORIAL DEL PANEL (perfil, posiciones y lectura por municipio)
+# -----------------------------------------------------------------------------
+SUMABLES = {"poblacion", "coca_ha"}
+PERFIL = ["poblacion", "va_pc", "ipm", "tasa_homicidios", "tasa_vif", "coca_ha", "cobertura_neta", "desercion",
+          "partos_inst", "idf", "dep_transf", "rec_propios", "mdm"]
+MAX_DETALLE = 8
+
+
+def hay_seleccion(sel):
+    return 0 < len(sel) < len(CAT)
+
+
+def desc_seleccion(subs, muns):
+    """Texto corto que describe la selección del panel."""
+    sel = municipios_sel(subs, muns)
+    if not hay_seleccion(sel):
+        return sel, "Todo Nariño (64 municipios)"
+    if len(sel) == 1:
+        return sel, f"{sel[0]} ({MUN_A_SUB[sel[0]]})"
+    subs_v = [x for x in (subs or []) if x in SUBREGIONES]
+    if not [m for m in (muns or []) if m in MUN_A_COD] and subs_v:
+        return sel, f"{'Subregión' if len(subs_v) == 1 else 'Subregiones'} {', '.join(subs_v)} · {len(sel)} municipios"
+    return sel, f"{len(sel)} municipios: {', '.join(sel[:6])}{'…' if len(sel) > 6 else ''}"
+
+
+def valores_anio(k, anio):
+    """Serie municipio → valor de k en el año dado (censales: corte oficial)."""
+    return corte(anio, [k]).set_index("municipio")[k]
+
+
+def valor_seleccion(sel, k, anio):
+    """Valor agregado de la selección: suma (población, hectáreas) o promedio ponderado por población."""
+    v = valores_anio(k, anio).reindex(sel)
+    if k in SUMABLES:
+        return float(v.sum()) if v.notna().any() else np.nan
+    w = PANEL[PANEL.anio == min(int(anio), int(PANEL.anio.max()))].set_index("municipio").poblacion.reindex(sel)
+    ok = v.notna() & w.notna()
+    if not ok.any():
+        return float(v.mean()) if v.notna().any() else np.nan
+    return float(np.average(v[ok], weights=w[ok]))
+
+
+def puesto_de(k, anio, mm):
+    """Posición del municipio entre los 64 (1 = mejor situación según el sentido normativo)."""
+    v = valores_anio(k, anio).dropna()
+    if mm not in v.index:
+        return None, len(v)
+    s = META[k]["sentido"]
+    rk = v.rank(ascending=(s == -1), method="min")
+    return int(rk[mm]), len(v)
+
+
+def puesto_txt(k, anio, mm):
+    r, n = puesto_de(k, anio, mm)
+    if r is None:
+        return "sin dato"
+    ref = "1 = mejor situación" if META[k]["sentido"] != 0 else "1 = valor más alto"
+    return f"puesto {r} de {n} ({ref})"
+
+
+def lectura_vs_mediana(k, valor, mediana):
+    s = META[k]["sentido"]
+    if not (np.isfinite(valor) and np.isfinite(mediana)) or s == 0 or valor == mediana:
+        return '<span class="sem neutro">—</span>'
+    mejor = (valor - mediana) * s > 0
+    return '<span class="sem ok">▲ mejor que la mediana</span>' if mejor else '<span class="sem mal">▼ peor que la mediana</span>'
+
+
+def bloque_sel(titulo, items):
+    """Recuadro destacado con la lectura de la selección del panel dentro de un callout."""
+    if not items:
+        return ""
+    return f'<div class="sel-box"><h5>📍 {titulo}</h5><ul>{"".join(f"<li>{x}</li>" for x in items)}</ul></div>'
+
+
+def estado_filtros(subs, muns, a0, a1, pendiente=False):
+    if pendiente:
+        return ('<div class="estado-filtros pend">● Cambios sin aplicar<br><span>Pulse «Aplicar filtros» para actualizar las pestañas</span></div>')
+    _, etq = desc_seleccion(subs, muns)
+    a0, a1 = rango(a0, a1)
+    return f'<div class="estado-filtros ok">✓ Mostrando<br><span>{etq} · {a0}–{a1}</span></div>'
+
+
+def html_perfil(subs, muns, a0, a1):
+    """Ficha del territorio elegido en el panel (pestaña Inicio)."""
+    a0, a1 = rango(a0, a1)
+    sel, etq = desc_seleccion(subs, muns)
+    if not hay_seleccion(sel):
+        return ('<div class="perfil-vacio">📍 <b>Perfil del territorio seleccionado.</b> Las tarjetas y gráficos de esta pestaña describen a todo '
+                'el departamento. Elija una subregión o uno o varios municipios en el <b>Panel de control territorial</b> y pulse '
+                '<b>«Aplicar filtros»</b> para ver aquí su ficha comparada con la mediana de Nariño; el resto de pestañas también lo destacará.</div>')
+    filas = []
+    for k in PERFIL:
+        anio = anio_valido(k, a1)
+        if anio is None:
+            continue
+        v = valor_seleccion(sel, k, anio)
+        if not np.isfinite(v):
+            continue
+        todos = valores_anio(k, anio)
+        med = float(todos.median())
+        pos = puesto_txt(k, anio, sel[0]).replace("puesto ", "") if len(sel) == 1 and k != "poblacion" else "—"
+        ref = fmt_val(todos.sum(), k) + " (total)" if k in SUMABLES else fmt_val(med, k)
+        lect = lectura_vs_mediana(k, v, med) if k not in SUMABLES else '<span class="sem neutro">—</span>'
+        filas.append(f"<tr><td>{nombre(k)}<div class='u'>{META[k]['unidad']}</div></td><td class='num'>{anio}</td>"
+                     f"<td class='num'><b>{fmt_val(v, k)}</b></td><td class='num'>{ref}</td><td>{pos}</td><td>{lect}</td></tr>")
+    pob = valor_seleccion(sel, "poblacion", anio_valido("poblacion", a1))
+    subs_sel = sorted({MUN_A_SUB[m] for m in sel}, key=SUBREGIONES.index)
+    nota = ("Valores del municipio." if len(sel) == 1 else
+            "Selección de varios municipios: tasas y porcentajes ponderados por población; población y hectáreas de coca suman.")
+    return (f'<div class="perfil"><div class="perfil-cab"><div><div class="eyebrow">Perfil del territorio seleccionado</div>'
+            f'<h3>{etq}</h3><p>{"Subregión" if len(subs_sel) == 1 else "Subregiones"}: {", ".join(subs_sel)} · Población: <b>{fnum(pob, 0)}</b> habitantes · '
+            f'Periodo del panel: {a0}–{a1} (se usa el año disponible más cercano a {a1})</p></div></div>'
+            f'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Indicador</th><th>Año</th><th>Selección</th><th>Nariño (mediana municipal)</th>'
+            f'<th>Posición entre 64</th><th>Lectura</th></tr></thead><tbody>{"".join(filas)}</tbody></table></div>'
+            f'<p class="nota-fuente">{nota} Posición: 1 = mejor situación según el sentido de cada indicador. Fuentes: DANE, DNP, MinDefensa, MinEducación, MinSalud, SIMCI.</p></div>')
+
+
+# -----------------------------------------------------------------------------
 # 14. CARTOGRAFÍA TEMÁTICA (polígonos oficiales MGN, render vectorial autónomo)
 # -----------------------------------------------------------------------------
 def mapa_municipal(valores, titulo, colorscale=None, textos=None, discreto=None, resaltar=None, cbar_title="", alto=540):
@@ -2732,6 +2962,8 @@ def tab2_run(subs, muns, a0, a1, ind, anio, vista):
                               customdata=np.column_stack([dr.subregion, var]),
                               hovertemplate=f"<b>%{{y}}</b> · %{{customdata[0]}}<br>Año: {anio}<br>{m['nombre']}: %{{x:,.{m['dec']}f}} {m['unidad']}<br>Variación anual: %{{customdata[1]}}<extra></extra>"))
     med = cr[k].median()
+    if len(dr) < 6:
+        f_rank.update_traces(width=0.45)
     f_rank.add_vline(x=med, line=dict(color=C["ambar"], dash="dash", width=2))
     f_rank.update_layout(title=f"{m['nombre']} · {vista.lower()} ({anio})<br><sup>Línea punteada: mediana de Nariño ({fmt_val(med, k)}) · † dato imputado (PCHIP)</sup>",
                          height=max(460, min(560, 22 * len(dr) + 130)), margin=dict(l=160, r=30, t=70, b=50))
@@ -2742,7 +2974,14 @@ def tab2_run(subs, muns, a0, a1, ind, anio, vista):
         f_box.add_trace(go.Box(y=dd[k], name=sb, marker_color=COLOR_SUB[sb], boxpoints="all", jitter=0.4, pointpos=0,
                                marker=dict(size=6, opacity=0.8), line=dict(width=1.6), text=dd.municipio,
                                hovertemplate=f"<b>%{{text}}</b><br>{sb}<br>Año: {anio}<br>{m['nombre']}: %{{y:,.{m['dec']}f}}<extra></extra>"))
-    f_box.update_layout(title=f"Brechas entre subregiones ({anio})", showlegend=False, height=480, margin=dict(l=70, r=20, t=60, b=110))
+    if hay_seleccion(sel):
+        ds = cr[cr.municipio.isin(sel)]
+        f_box.add_trace(go.Scatter(x=ds.subregion, y=ds[k], mode="markers+text" if len(ds) <= MAX_DETALLE else "markers",
+                                   text=ds.municipio, textposition="middle right", textfont=dict(size=11, color=C["navy"]),
+                                   marker=dict(symbol="star", size=16, color="#f59e0b", line=dict(color=C["navy"], width=1.5)),
+                                   name="Selección", hovertemplate=f"<b>%{{text}}</b> (selección)<br>Año: {anio}<br>{m['nombre']}: %{{y:,.{m['dec']}f}}<extra></extra>"))
+    f_box.update_layout(title=f"Brechas entre subregiones ({anio}){'<br><sup>★ municipios de su selección</sup>' if hay_seleccion(sel) else ''}",
+                        showlegend=False, height=480, margin=dict(l=70, r=20, t=60, b=110))
     f_box.update_xaxes(tickangle=-35)
     eje(f_box, k, "y")
     # Trayectorias o brecha urbano-rural
@@ -2811,16 +3050,32 @@ def tab2_run(subs, muns, a0, a1, ind, anio, vista):
             tendencia_txt = (f"<li>Entre {serie.index[0]} y {serie.index[-1]} la mediana pasó de {fmt_val(serie.iloc[0], k)} a "
                              f"{fmt_val(serie.iloc[-1], k)}: <b>{'mejora' if mejora else 'deterioro'}</b>.</li>")
     sel_txt = ""
-    if len(sel) < 64:
-        vs = cr[cr.municipio.isin(sel)][k].mean()
+    items_sel = []
+    if hay_seleccion(sel):
+        vs = valor_seleccion(sel, k, anio)
         rel = "mejor" if (vs - med) * s > 0 else "peor"
-        sel_txt = f"<li>Su selección ({len(sel)} municipio{'s' if len(sel) > 1 else ''}) promedia <b>{fmt_val(vs, k)}</b>, <b>{rel}</b> que la mediana departamental.</li>"
+        if len(sel) > 1:
+            items_sel.append(f"Su selección ({len(sel)} municipios) registra <b>{fmt_val(vs, k)}</b> (promedio ponderado por población), "
+                             f"<b>{rel}</b> que la mediana departamental ({fmt_val(med, k)}).")
+        vals_sel = cr.set_index("municipio")[k]
+        for mm in sel[:MAX_DETALLE]:
+            v = vals_sel.get(mm, np.nan)
+            if not np.isfinite(v):
+                items_sel.append(f"<b>{mm}</b>: sin dato en {anio}.")
+                continue
+            var_t = f" · variación anual {variacion_txt(prev.get(mm, np.nan), v, k)}" if m["corte"] == "anual" else ""
+            items_sel.append(f"<b>{mm}</b> ({MUN_A_SUB[mm]}): {fmt_val(v, k)} · {puesto_txt(k, anio, mm)} · "
+                             f"{'mejor' if (v - med) * s > 0 else 'peor' if (v - med) * s < 0 else 'igual'} que la mediana{var_t}.")
+        if len(sel) > MAX_DETALLE:
+            items_sel.append(f"… y {len(sel) - MAX_DETALLE} municipios más (vista «Selección actual» del ranking).")
     cuerpo = (f"<p>En <b>{anio}</b> la mediana municipal de <b>{minus(m['nombre'])}</b> en Nariño fue <b>{fmt_val(med, k)}</b> ({m['unidad']}).</p><ul>"
               f"<li>Situación más crítica: <b>{peor.municipio}</b> ({peor.subregion}) con {fmt_val(peor[k], k)}; más favorable: "
               f"<b>{mejor.municipio}</b> ({mejor.subregion}) con {fmt_val(mejor[k], k)}.</li>"
               f"<li>Entre subregiones, <b>{sub_m.index[0]}</b> presenta el peor promedio y <b>{sub_m.index[-1]}</b> el mejor: brecha de <b>{brecha}</b>.</li>"
               f"{tendencia_txt}<li><b>{len(tabla_out)}</b> municipios con valores atípicos requieren revisión focalizada.</li>{sel_txt}</ul>"
               f"<p class='nota-fuente'>{etiqueta_fuente(k)}</p>{nota_anio(k, pedido, anio)}")
+    if items_sel:
+        cuerpo = cuerpo.replace("<p class='nota-fuente'>", bloque_sel(f"Su selección · {minus(m['nombre'])} ({anio})", items_sel) + "<p class='nota-fuente'>", 1)
     html_n = callout("Diagnóstico para la decisión pública", cuerpo, "info", "🧭")
     # Técnica
     desc = cr.groupby("subregion")[k].agg(["count", "mean", "median", "std", "min", "max"]).reset_index()
@@ -2909,12 +3164,12 @@ def tab3_run(subs, muns, a0, a1, ind, anio, tipo_w, k_vec):
     textos_l = [f"<b>{mm}</b><br>Clúster LISA: {et}<br>I local: {fnum(ii, 3)}<br>p (pseudo): {fnum(p, 3)}"
                 for mm, et, ii, p in zip(d.municipio, etiqueta, res["Ii"], res["p_loc"])]
     f_lisa = mapa_municipal(etiqueta, "Mapa de clústeres LISA (α = 0,05)<br><sup>Alto-Alto: puntos calientes · Bajo-Bajo: núcleos fríos</sup>",
-                            textos=textos_l, discreto=(list(CUAD_COL.keys()), CUAD_COL))
+                            textos=textos_l, discreto=(list(CUAD_COL.keys()), CUAD_COL), resaltar=sel if len(sel) < 64 else None)
     p = np.asarray(res["p_loc"])
     sig = np.where(p < 0.01, "p < 0,01", np.where(p < 0.05, "p < 0,05", np.where(p < 0.10, "p < 0,10", "No significativo")))
     f_sig = mapa_municipal(sig, "Mapa de significancia de Moran local<br><sup>p-valores empíricos por 999 permutaciones condicionales</sup>",
                            textos=[f"<b>{mm}</b><br>p (pseudo): {fnum(pp, 4)}" for mm, pp in zip(d.municipio, p)],
-                           discreto=(list(SIG_COL.keys()), SIG_COL))
+                           discreto=(list(SIG_COL.keys()), SIG_COL), resaltar=sel if len(sel) < 64 else None)
     # Diagrama de dispersión de Moran: pendiente exacta = I
     Wr = W / W.sum(1, keepdims=True)
     z = (y - y.mean()) / y.std()
@@ -2973,6 +3228,20 @@ def tab3_run(subs, muns, a0, a1, ind, anio, tipo_w, k_vec):
     if bueno:
         txt += f"<li><b>Núcleos de buen desempeño</b>: {', '.join(bueno[:10])}{'…' if len(bueno) > 10 else ''}.</li>"
     txt += f"<li>Matriz de vecindad: <b>{tipo_w}</b> sobre límites oficiales MGN-DANE.</li></ul>"
+    if hay_seleccion(sel):
+        lect_lisa = {"Alto-Alto": "valor alto rodeado de vecinos altos", "Bajo-Bajo": "valor bajo rodeado de vecinos bajos",
+                     "Alto-Bajo": "valor alto entre vecinos bajos (atípico)", "Bajo-Alto": "valor bajo entre vecinos altos (atípico)",
+                     "No significativo": "sin patrón local significativo"}
+        pos = {mm: i for i, mm in enumerate(d.municipio)}
+        items = []
+        for mm in sel[:MAX_DETALLE]:
+            i = pos[mm]
+            items.append(f"<b>{mm}</b>: {fmt_val(y[i], k)} · {puesto_txt(k, anio, mm)} · clúster LISA <b>{etiqueta[i]}</b> "
+                         f"({lect_lisa.get(etiqueta[i], '')}; p = {fnum(p[i], 3)}).")
+        if len(sel) > MAX_DETALLE:
+            cnt = pd.Series(etiqueta[[pos[mm] for mm in sel]]).value_counts()
+            items.append(f"Resumen de los {len(sel)} municipios: " + ", ".join(f"{et}: {n}" for et, n in cnt.items()) + ".")
+        txt += bloque_sel(f"Su selección en el mapa ({anio})", items)
     html_n = callout(titulo, txt + f'<p class="nota-fuente">{etiqueta_fuente(k)}</p>{nota_anio(k, pedido, anio)}', tono, "🗺️")
     vecinos = (W > 0).sum(1)
     tab = pd.DataFrame([
@@ -3090,7 +3359,8 @@ def tab4_run(subs, muns, a0, a1, vars_, k, metodo, eps, logasim):
     etiquetas_mapa = np.array([nombres_c[c] for c in lab_ord])
     textos = [f"<b>{mm}</b> · {sb}<br>{nombres_c[c]}" for mm, sb, c in zip(cs_ord.municipio, cs_ord.subregion, lab_ord)]
     f_map = mapa_municipal(etiquetas_mapa, f"Mapa de tipologías territoriales ({metodo})", textos=textos,
-                           discreto=([nombres_c[c] for c in sorted(set(lab))], {nombres_c[c]: col_c[c] for c in set(lab)}))
+                           discreto=([nombres_c[c] for c in sorted(set(lab))], {nombres_c[c]: col_c[c] for c in set(lab)}),
+                           resaltar=sel if len(sel) < 64 else None)
     filas = [[nombres_c[c], int((lab == c).sum()), ", ".join(cs.municipio[lab == c].tolist())] for c in sorted(set(lab))]
     tabla = tabla_html(pd.DataFrame(filas, columns=["Tipología", "N.º municipios", "Municipios"]), decs={"N.º municipios": 0})
     met = []
@@ -3112,6 +3382,20 @@ def tab4_run(subs, muns, a0, a1, vars_, k, metodo, eps, logasim):
               f"<li>La tipología más numerosa es <b>{grande[0]}</b> ({grande[1]} municipios).</li>"
               f"<li>Los perfiles permiten diseñar <b>paquetes de política diferenciados</b>.</li>"
               f"<li>Variables anuales promediadas en {a0}–{a1} y cortes censales 2018; {len(vars_)} variables{' (log en las asimétricas)' if transf else ''}.</li></ul>")
+    if hay_seleccion(sel):
+        lab_mun = dict(zip(cs.municipio, lab))
+        items = []
+        for mm in sel[:MAX_DETALLE]:
+            c = lab_mun.get(mm)
+            if c is None:
+                continue
+            pares = [x for x in cs.municipio[lab == c] if x != mm]
+            items.append(f"<b>{mm}</b> pertenece a <b>{nombres_c[c]}</b> ({int((lab == c).sum())} municipios)"
+                         + (f"; se parece a: {', '.join(pares[:5])}{'…' if len(pares) > 5 else ''}." if pares else "."))
+        if len(sel) > MAX_DETALLE:
+            cnt = pd.Series([nombres_c[lab_mun[mm]] for mm in sel if mm in lab_mun]).value_counts()
+            items.append(f"Los {len(sel)} municipios de su selección se reparten así: " + "; ".join(f"{t}: {n}" for t, n in cnt.items()) + ".")
+        cuerpo += bloque_sel("Su selección en las tipologías", items)
     html_n = callout("Tipologías para focalizar la política pública", cuerpo, "info", "🧩")
     tec = (f'<div class="tec"><h5>Comparación de algoritmos</h5>{tabla_html(dfm, decs={"Clústeres": 0, "Ruido": 0, "Silhouette ↑": 3, "Calinski-Harabasz ↑": 1, "Davies-Bouldin ↓": 3})}'
            f'<p>Variables estandarizadas. Transformaciones: {", ".join(f"{nombre(a)}: {b}" for a, b in transf.items()) or "ninguna"}. '
@@ -3227,6 +3511,19 @@ def tab5_run(subs, muns, a0, a1, vars_):
               f"<li>Subregión más rezagada: <b>{sub_idx.index[0]}</b> ({fnum(sub_idx.iloc[0], 1)}/100); más avanzada: <b>{sub_idx.index[-1]}</b> ({fnum(sub_idx.iloc[-1], 1)}/100).</li>"
               f"<li>Adecuación muestral: KMO = {fnum(kmo, 3)} ({'aceptable' if kmo >= 0.6 else 'mediocre' if kmo >= 0.5 else 'insuficiente'}); "
               f"Bartlett p {'< 0,001' if p_b < 0.001 else '= ' + fnum(p_b, 3)}.</li></ul>")
+    if hay_seleccion(sel):
+        rk = cs.set_index("municipio").indice.rank(ascending=False, method="min")
+        idx_m = cs.set_index("municipio").indice
+        items = []
+        if len(sel) > 1:
+            items.append(f"Promedio simple del índice en su selección: <b>{fnum(idx_m.reindex(sel).mean(), 1)}/100</b> "
+                         f"(mediana de Nariño: {fnum(idx_m.median(), 1)}/100).")
+        for mm in sel[:MAX_DETALLE]:
+            items.append(f"<b>{mm}</b> ({MUN_A_SUB[mm]}): índice <b>{fnum(idx_m[mm], 1)}/100</b> · puesto {int(rk[mm])} de {len(rk)} "
+                         f"(1 = mayor desarrollo relativo) · {'por encima' if idx_m[mm] > idx_m.median() else 'por debajo'} de la mediana.")
+        if len(sel) > MAX_DETALLE:
+            items.append(f"… y {len(sel) - MAX_DETALLE} municipios más (resaltados en el ranking y el mapa).")
+        cuerpo += bloque_sel("Su selección en el índice", items)
     html_n = callout("Un solo número para comparar el desarrollo municipal", cuerpo, "info", "📉")
     eig = pd.DataFrame({"Componente": comps, "Autovalor": ev, "% varianza": evr * 100, "% acumulado": np.cumsum(evr) * 100})
     carg = pd.DataFrame(cargas[:, :ncol], columns=comps[:ncol]).assign(Variable=[nombre(v) for v in vars_])[["Variable"] + comps[:ncol]]
@@ -3307,6 +3604,13 @@ def tab6_run(subs, muns, a0, a1, target, feats, modelo_graf):
             f_rp.add_trace(go.Scatter(x=y[msk], y=oof[mg][msk], mode="markers", name=sb, text=d.municipio.values[msk],
                                       marker=dict(size=8 if modo == "panel" else 11, color=COLOR_SUB[sb], opacity=0.85, line=dict(color="white", width=0.6)),
                                       hovertemplate="<b>%{text}</b><br>Real: %{x:,.2f}<br>Predicho (fuera de muestra): %{y:,.2f}<extra></extra>"))
+    sel = municipios_sel(subs, muns)
+    if hay_seleccion(sel):
+        msk_s = d.municipio.isin(sel).values
+        f_rp.add_trace(go.Scatter(x=y[msk_s], y=oof[mg][msk_s], mode="markers+text" if modo == "transversal" and msk_s.sum() <= MAX_DETALLE else "markers",
+                                  text=d.municipio.values[msk_s], textposition="top center", textfont=dict(size=11, color=C["navy"]),
+                                  marker=dict(symbol="star", size=15 if modo == "transversal" else 11, color="#f59e0b", line=dict(color=C["navy"], width=1.3)),
+                                  name="★ Selección", hovertemplate="<b>%{text}</b> (selección)<br>Real: %{x:,.2f}<br>Predicho: %{y:,.2f}<extra></extra>"))
     lim = [min(y.min(), oof[mg].min()), max(y.max(), oof[mg].max())]
     f_rp.add_trace(go.Scatter(x=lim, y=lim, mode="lines", name="Ajuste perfecto (45°)", line=dict(color=C["navy"], dash="dash", width=2), hoverinfo="skip"))
     r2v = met.loc[met.Modelo == mg, "R² fuera de muestra"].iloc[0]
@@ -3387,6 +3691,24 @@ def tab6_run(subs, muns, a0, a1, target, feats, modelo_graf):
               f"El mejor desempeño <b>fuera de muestra</b> es de <b>{mejor}</b> (R² = {fnum(met.iloc[0]['R² fuera de muestra'], 3)}).</p>"
               f"<p>Asociaciones estadísticamente robustas (MCO con errores {tipo_ee}):</p><ul>{lista or '<li>Ningún factor es significativo al 5 %.</li>'}</ul>"
               f"<p class='nota-fuente'>Lectura causal sujeta a exogeneidad; la vista técnica reporta diagnósticos de especificación. {etiqueta_fuente(target)}</p>")
+    if hay_seleccion(sel):
+        dd_s = pd.DataFrame({"municipio": d.municipio.values, "real": y, "pred": oof[mg]})
+        dd_s = dd_s[dd_s.municipio.isin(sel)].groupby("municipio")[["real", "pred"]].mean()
+        sm_ = m["sentido"] or 1
+        items = []
+        for mm in [x for x in sel if x in dd_s.index][:MAX_DETALLE]:
+            r_, p_ = dd_s.loc[mm, "real"], dd_s.loc[mm, "pred"]
+            gap = (r_ - p_) * sm_
+            juicio = ("mejor de lo esperado según sus factores" if gap > 0 else "peor de lo esperado según sus factores") if abs(r_ - p_) > 1e-9 else "en línea con lo esperado"
+            items.append(f"<b>{mm}</b>: observado {fmt_val(r_, target)} frente a {fmt_val(p_, target)} predicho por {mg} → <b>{juicio}</b>"
+                         f"{' (promedio ' + str(a0) + '–' + str(a1) + ')' if modo == 'panel' else ''}.")
+        faltan = [x for x in sel if x not in dd_s.index]
+        if faltan and len(items) < MAX_DETALLE:
+            items.append(f"Sin observaciones completas para: {', '.join(faltan[:6])}{'…' if len(faltan) > 6 else ''}.")
+        if len(sel) > MAX_DETALLE:
+            items.append(f"… y {len(sel) - MAX_DETALLE} municipios más (★ en el gráfico real vs. predicho).")
+        items.append("El modelo se estima con los 64 municipios: un municipio solo no tiene observaciones suficientes para estimarlo por separado.")
+        cuerpo = cuerpo.replace("<p class='nota-fuente'>", bloque_sel("Su selección frente al modelo", items) + "<p class='nota-fuente'>", 1)
     html_n = callout("¿Qué factores explican el indicador?", cuerpo, "info", "🤖")
     try:
         rs = linear_reset(ols_nr, power=3, use_f=True)
@@ -3790,7 +4112,12 @@ def agregado(munis, col, anio, pond="poblacion"):
 @blindado(["html", "html", "fig", "html"])
 def tab9_run(alcance, s_rec, s_transf, s_inv, dur, rho):
     est, okun = estimar_elasticidades()
-    munis = CAT.municipio.tolist() if alcance == "Todo Nariño" else CAT[CAT.subregion == alcance].municipio.tolist()
+    if alcance in MUN_A_COD:
+        munis = [alcance]
+    elif alcance in SUBREGIONES:
+        munis = CAT[CAT.subregion == alcance].municipio.tolist()
+    else:
+        munis = CAT.municipio.tolist()
     choque = np.array([float(s_rec), float(s_transf), float(s_inv)])
     rng = np.random.default_rng(CONFIG["semilla"])
     N = 1000
@@ -4086,6 +4413,41 @@ def actualizar_irf_opts(vars_):
     return (gr.update(choices=ops, value=vars_[-1] if vars_ else None), gr.update(choices=ops, value=vars_[0] if vars_ else None))
 
 
+def clave_filtros(subs, muns, a0, a1):
+    a0, a1 = rango(a0, a1)
+    return (tuple(sorted(subs or [])), tuple(sorted(muns or [])), a0, a1)
+
+
+def marcar_pendiente(subs, muns, a0, a1, aplicado):
+    if aplicado is not None and clave_filtros(subs, muns, a0, a1) == tuple(tuple(x) if isinstance(x, list) else x for x in aplicado):
+        return estado_filtros(subs, muns, a0, a1)
+    return estado_filtros(subs, muns, a0, a1, pendiente=True)
+
+
+def sincronizar(subs, muns, a0, a1):
+    """Lleva la selección del panel a las pestañas con controles propios (Radiografía, Pronóstico, Simulador, XAI)."""
+    sel = municipios_sel(subs, muns)
+    muns_v = [m for m in (muns or []) if m in MUN_A_COD]
+    if hay_seleccion(sel):
+        vista = "Selección actual"
+        terr = muns_v[0] if muns_v else (sel[0] if len(sel) == 1 else TERR_NARINO)
+        subs_sel = {MUN_A_SUB[m] for m in sel}
+        alcance = sel[0] if len(sel) == 1 else (next(iter(subs_sel)) if len(subs_sel) == 1 else "Todo Nariño")
+        muni_x = sel[0]
+    else:
+        vista, terr, alcance, muni_x = "25 más críticos", TERR_NARINO, "Todo Nariño", "Pasto"
+    try:
+        perfil = html_perfil(subs, muns, a0, a1)
+    except Exception as e:
+        perfil = f'<div class="perfil-vacio">No fue posible construir el perfil: {e}</div>'
+    return (gr.update(value=vista), gr.update(value=terr), gr.update(value=alcance), gr.update(value=muni_x),
+            estado_filtros(subs, muns, a0, a1), perfil, clave_filtros(subs, muns, a0, a1))
+
+
+def restablecer_todo():
+    return restablecer() + sincronizar([], [], A0, ANIO_MAX)
+
+
 def muni_xai_default(subs, muns):
     sel = municipios_sel(subs, muns)
     return gr.update(value=sel[0] if len(sel) < 64 else "Pasto")
@@ -4106,12 +4468,15 @@ with gr.Blocks(**_kw_blocks) as demo:
             with gr.Column(scale=1, min_width=170):
                 b_apl = gr.Button("Aplicar filtros", variant="primary", elem_classes="obs-btn-primary")
                 b_res = gr.Button("Restablecer", variant="secondary", elem_classes="obs-btn-sec")
+                f_estado = gr.HTML(estado_filtros([], [], A0, ANIO_MAX))
     FILTROS = [f_sub, f_mun, f_a0, f_a1]
+    f_aplicado = gr.State(clave_filtros([], [], A0, ANIO_MAX))
 
     with gr.Tabs():
         with gr.Tab("🏛️ Inicio"):
             gr.HTML(html_hero())
             gr.HTML(html_kpis())
+            t1_perfil = gr.HTML(html_perfil([], [], A0, ANIO_MAX))
             with gr.Row():
                 with gr.Column(scale=3):
                     gr.Plot(fig_pulso(), show_label=False)
@@ -4242,6 +4607,9 @@ with gr.Blocks(**_kw_blocks) as demo:
                           "Cómo se transmiten los choques entre series departamentales oficiales: funciones impulso-respuesta con intervalos del 95 %, "
                           "descomposición de la varianza (FEVD) y verificación de estabilidad con raíces inversas.",
                           ["ADF", "Johansen", "VAR", "VECM", "OIRF con IC 95 %", "FEVD", "Raíces inversas", "Granger"]))
+            gr.HTML('<div class="nota-alcance">ℹ️ <b>Alcance de este módulo:</b> trabaja con series <b>departamentales</b> de Nariño (PIB, mercado laboral de Pasto A.M., '
+                    'seguridad, coca, finanzas). Esas cifras no se publican por municipio con la longitud que exige un VAR/VECM, por eso los filtros de '
+                    'subregión y municipio del panel no se aplican aquí.</div>')
             with gr.Row():
                 t7_vars = gr.Dropdown(opciones(VARS_VAR_OPC), value=["pib", "desempleo", "tasa_homicidios_dep"], multiselect=True,
                                       label="Series del sistema (2 a 4)", scale=4)
@@ -4284,7 +4652,7 @@ with gr.Blocks(**_kw_blocks) as demo:
             with gr.Row():
                 with gr.Column(scale=1, elem_classes="panel-control"):
                     gr.HTML('<div class="panel-titulo">🧪 Diseño del escenario</div>')
-                    t9_alc = gr.Dropdown(["Todo Nariño"] + SUBREGIONES, value="Todo Nariño", label="Alcance territorial")
+                    t9_alc = gr.Dropdown(["Todo Nariño"] + SUBREGIONES + NOMBRES, value="Todo Nariño", label="Alcance territorial (Nariño, subregión o municipio)")
                     t9_rec = gr.Slider(-10, 20, value=10, step=1, label="Recaudo propio: predial + ICA (Δ p.p. de ingresos corrientes)")
                     t9_tr = gr.Slider(-20, 10, value=-5, step=1, label="Dependencia de transferencias SGP (Δ p.p. de ingresos)")
                     t9_inv = gr.Slider(-5, 5, value=2, step=0.5, label="Magnitud de la inversión (Δ p.p. del gasto)")
@@ -4331,23 +4699,31 @@ with gr.Blocks(**_kw_blocks) as demo:
     E10 = (tab10_run, FILTROS + [t10_y, t10_m], [t10_n, t10_imp, t10_loc, t10_pdp, t10_rad, t10_tec])
 
     f_sub.change(actualizar_municipios, [f_sub, f_mun], [f_mun])
-    b_res.click(restablecer, None, FILTROS)
-    for fn, ins, outs in (E2, E3, E4, E5, E6, E10):
-        b_apl.click(fn, ins, outs)
-    b_apl.click(muni_xai_default, [f_sub, f_mun], [t10_m])
+    for ctl in FILTROS:
+        ctl.change(marcar_pendiente, FILTROS + [f_aplicado], [f_estado], queue=False, show_progress="hidden")
+    SINCRONIZADOS = [t2_vista, t8_terr, t9_alc, t10_m, f_estado, t1_perfil, f_aplicado]
+
+    def encadenar(ev):
+        """Tras aplicar o restablecer: recalcula todas las pestañas conectadas al panel."""
+        for fn, ins, outs in (E2, E3, E4, E5, E6, E9, E10):
+            ev.then(fn, ins, outs)
+        ev.then(actualizar_ind_pron, [t8_terr], [t8_ind]).then(*E8)
+
+    encadenar(b_apl.click(sincronizar, FILTROS, SINCRONIZADOS))
+    encadenar(b_res.click(restablecer_todo, None, FILTROS + SINCRONIZADOS))
     for btn, ev in ((t2_btn, E2), (t3_btn, E3), (t4_btn, E4), (t5_btn, E5), (t6_btn, E6), (t7_btn, E7), (t8_btn, E8), (t9_btn, E9), (t10_btn, E10)):
         btn.click(*ev)
     t7_vars.change(actualizar_irf_opts, [t7_vars], [t7_imp, t7_res])
     t8_terr.change(actualizar_ind_pron, [t8_terr], [t8_ind])
-    for ctl in (t2_ind, t2_vista):
-        ctl.change(*E2)
+    t2_ind.change(*E2)
+    t2_vista.input(*E2)
     for ctl in (t3_ind, t3_w):
         ctl.change(*E3)
     t4_met.change(*E4)
-    t9_alc.change(*E9)
+    t9_alc.input(*E9)
     for ctl in (t9_rec, t9_tr, t9_inv, t9_dur, t9_rho):
         ctl.release(*E9)
-    t10_m.change(*E10)
+    t10_m.input(*E10)
     for fn, ins, outs in (E2, E3, E4, E5, E6, E7, E8, E9, E10):
         demo.load(fn, ins, outs)
 

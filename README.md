@@ -59,7 +59,8 @@ Todas las cifras provienen de entidades oficiales colombianas (DANE, DNP, MinDef
 - **Cartografía oficial.** Polígonos del Marco Geoestadístico Nacional (MGN 2018, DANE) para los 64 municipios, unidos por código DIVIPOLA de 5 dígitos.
 - **Datos en vivo con respaldo verificado.** Al iniciar, el sistema consulta en paralelo las APIs SODA de [datos.gov.co](https://www.datos.gov.co). Si un servidor no responde, usa una instantánea oficial verificada que va dentro del script, de modo que la aplicación funciona incluso sin conexión.
 - **Trazabilidad total.** Cada serie indica su entidad, su enlace de origen y si se cargó en vivo o desde la instantánea. Una bitácora de auditoría registra rupturas metodológicas, valores atípicos e imputaciones.
-- **Panel de control territorial.** Filtros en cascada por subregión, municipio y periodo que aplican a todos los módulos.
+- **Panel de control territorial.** Filtros en cascada por subregión, municipio y periodo. Un indicador junto al botón muestra si hay «cambios sin aplicar» o qué territorio y periodo se están mostrando.
+- **Lectura por territorio.** Al aplicar un filtro, la pestaña *Inicio* muestra el **perfil del territorio seleccionado** (13 indicadores comparados con la mediana de Nariño y su posición entre los 64 municipios). El resto de pestañas resalta la selección (★ en gráficos, borde en mapas) y añade un recuadro «📍 Su selección» con su lectura específica. Pronóstico, Simulador y XAI se ajustan solos al municipio o subregión elegidos.
 - **Doble modo de lectura** (ejecutiva y técnica) en cada pestaña.
 - **Robustez.** Cada gráfico se genera de forma aislada: un error en un cálculo no detiene la aplicación. Los cálculos costosos se guardan en caché.
 - **Diseño institucional.** Paleta sobria (azul marino `#0f172a` / `#1e3a8a`), tipografía Inter, tarjetas KPI y semáforo de desempeño (`#10b981` mejora · `#f59e0b` alerta · `#ef4444` deterioro).
@@ -71,7 +72,7 @@ Todas las cifras provienen de entidades oficiales colombianas (DANE, DNP, MinDef
 
 | # | Pestaña | Propósito | Métodos |
 |:-:|---|---|---|
-| 1 | 🏛️ **Inicio** | Pulso económico y social del departamento | KPIs con variación anual, PIB real y crecimiento, estructura sectorial del valor agregado, pobreza, Gini, seguridad, inversión en CTeI e Índice Departamental de Competitividad |
+| 1 | 🏛️ **Inicio** | Pulso económico y social del departamento y perfil del territorio elegido | Perfil municipal o subregional frente a la mediana de Nariño; KPIs con variación anual, PIB real y crecimiento, estructura sectorial del valor agregado, pobreza, Gini, seguridad, inversión en CTeI e Índice Departamental de Competitividad |
 | 2 | 📊 **Radiografía** | Comparar municipios y detectar brechas | EDA, rankings, diagramas de caja por subregión, trayectorias, valores atípicos (IQR y puntaje Z), normalidad, Kruskal-Wallis, correlación de Spearman |
 | 3 | 🗺️ **Espacial** | Saber si los problemas se concentran geográficamente | Coropleta continua, I de Moran global, C de Geary, LISA (HH, LL, HL, LH, NS a α = 0,05), mapa de significancia local (p < 0,01 / 0,05 / 0,10), diagrama de dispersión de Moran (pendiente = I), evolución anual del I de Moran |
 | 4 | ⛏️ **Tipologías** | Agrupar municipios con perfiles similares | K-Means, clúster jerárquico de Ward, DBSCAN, Silhouette, Calinski-Harabasz, método del codo, proyección PCA 2D, mapa de tipologías |
@@ -79,7 +80,7 @@ Todas las cifras provienen de entidades oficiales colombianas (DANE, DNP, MinDef
 | 6 | 🤖 **Modelos** | Identificar factores asociados a un resultado | MCO con errores robustos (HC3 / clúster), Ridge, Lasso, ElasticNet, SVR, Random Forest; validación cruzada fuera de muestra (KFold / GroupKFold); residuos frente a ajustados, Q-Q, Breusch-Pagan, RESET, VIF, importancia comparada de variables |
 | 7 | 📈 **VAR / VECM** | Estudiar cómo se transmiten los choques entre series | ADF, cointegración de Johansen, VAR en diferencias o VECM, impulso-respuesta ortogonalizada con IC 95 %, descomposición de la varianza (FEVD), raíces inversas y círculo unitario, causalidad de Granger |
 | 8 | 🧠 **Pronóstico** | Proyectar tendencias a 5 años | ARIMA con selección por AIC, ETS amortiguado, intervalos de predicción al 95 %, MAPE fuera de muestra, Ljung-Box |
-| 9 | 🎯 **Simulador** | Comparar escenarios de política fiscal hasta 2030 | Panel de efectos fijos bidireccionales (municipio y año), choques a recaudo propio (predial + ICA), dependencia de transferencias SGP e inversión; simulación Monte Carlo (1.000 réplicas), gráfico de abanico, ley de Okun |
+| 9 | 🎯 **Simulador** | Comparar escenarios de política fiscal hasta 2030 para Nariño, una subregión o un municipio | Panel de efectos fijos bidireccionales (municipio y año), choques a recaudo propio (predial + ICA), dependencia de transferencias SGP e inversión; simulación Monte Carlo (1.000 réplicas), gráfico de abanico, ley de Okun |
 | 10 | 🔎 **XAI** | Explicar un modelo y diagnosticar un municipio | Random Forest, importancia por permutación, dependencia parcial (PDP), explicación local, perfil radial de percentiles, recomendaciones automáticas |
 
 ---
@@ -185,6 +186,22 @@ python app.py
 
 La interfaz queda disponible en `http://127.0.0.1:7860` y, por `share=True`, también en un enlace público temporal de Gradio.
 
+### Opción C · Streamlit Community Cloud
+
+El observatorio está construido con **Gradio**, no con Streamlit, pero el script detecta cuando se ejecuta con `streamlit run app.py` y se adapta. Streamlit vuelve a ejecutar el script completo en cada visita, mientras que Gradio necesita un único servidor persistente; por eso, bajo Streamlit, el script:
+
+1. lanza el observatorio Gradio **una sola vez**, en segundo plano;
+2. espera a que Gradio publique su enlace `https://….gradio.live`;
+3. muestra la interfaz incrustada en la página de Streamlit, con un botón «Abrir en pantalla completa ↗».
+
+Para desplegarlo: en [share.streamlit.io](https://share.streamlit.io) elija **Create app**, seleccione el repositorio `javi711/observatorio_Narino`, rama `main`, archivo principal `app.py`, y pulse **Deploy**. La primera carga tarda 1–2 minutos (instalación de dependencias, cartografía y datos).
+
+> El enlace `gradio.live` en el que se apoya este modo es un servicio gratuito «de mejor esfuerzo» que dura hasta una semana. Cuando la app de Streamlit se reinicia, se genera uno nuevo automáticamente. Si la página indica que no pudo crear el enlace, use el botón «Reiniciar el servidor del observatorio».
+
+### Opción D · Hugging Face Spaces (alojamiento permanente recomendado)
+
+Como el observatorio es una aplicación Gradio, [Hugging Face Spaces](https://huggingface.co/spaces) la ejecuta de forma nativa, gratis y con un enlace permanente: cree un *Space* con SDK **Gradio**, suba `app.py` y `requirements.txt`, y el Space se publica solo.
+
 ### Tiempo de arranque
 
 Normalmente entre 10 y 40 segundos, según la velocidad de respuesta de datos.gov.co (tiempo máximo por consulta: 30 s). Sin conexión, el observatorio arranca con la instantánea embebida.
@@ -227,6 +244,7 @@ El script es **monolítico por diseño** (una sola celda de Colab) y está organ
 | Sección | Contenido |
 |---|---|
 | — | Instalación automática de dependencias faltantes (Colab o local) |
+| — | Modo Streamlit: lanza Gradio una sola vez en segundo plano y lo incrusta en la página |
 | 0–1 | Configuración editable e importaciones |
 | 2–3 | Sistema de diseño (paleta, CSS institucional, plantilla Plotly) y formatos numéricos colombianos |
 | 4–5 | Catálogo territorial (64 municipios, 13 subregiones, DIVIPOLA) y normalización textual |
@@ -234,7 +252,7 @@ El script es **monolítico por diseño** (una sola celda de Colab) y está organ
 | 8–9 | Trazabilidad de fuentes y consultas en vivo SODA (en paralelo) |
 | 10 | Cartografía MGN-DANE y matrices de pesos espaciales |
 | 11–12 | Auditoría de calidad, imputación PCHIP y construcción del panel municipio-año |
-| 13–14 | Utilidades de acceso a datos, componentes HTML y cartografía temática |
+| 13–14 | Utilidades de acceso a datos, selección territorial (perfil, posiciones, lectura por municipio), componentes HTML y cartografía temática |
 | 15–24 | Lógica de las 10 pestañas analíticas |
 | 25 | Interfaz Gradio (compatible con 4.x, 5.x y 6.x) y lanzamiento |
 
@@ -262,6 +280,9 @@ El script es **monolítico por diseño** (una sola celda de Colab) y está organ
 | Series anuales cortas | VAR/VECM y pronósticos trabajan con ~19–21 observaciones | Se presentan como resultados indicativos |
 | Simulador | Con los datos 2011–2022 varios efectos no son estadísticamente distintos de cero | Se reportan como «no concluyentes», con su intervalo |
 | Denuncias de VIF | Una tasa alta puede reflejar más capacidad institucional para denunciar | Se advierte en el diagnóstico automático |
+| Filtro de municipio | Moran/LISA, tipologías, PCA y modelos necesitan los 64 municipios para estimarse | La selección no recalcula esos modelos: se resalta y se describe su resultado (clúster, tipología, puesto, observado vs. predicho) |
+| VAR / VECM | Solo hay series departamentales con la longitud necesaria | El módulo lo indica y no usa el filtro de municipio |
+| Simulador por territorio | Las elasticidades se estiman con todo el panel y son comunes a todos los municipios | Cambian la historia y la línea base del territorio; el efecto de la política (en p.p. o %) es el mismo |
 
 ---
 
